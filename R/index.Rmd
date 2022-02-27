@@ -35,7 +35,8 @@ list.of.packages <- c(
   "webshot",
   "caret",
   "xgboost",
-  "car"
+  "car",
+  "tidygeocoder"
 )
 
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[, "Package"])]
@@ -54,6 +55,7 @@ suppressWarnings(suppressMessages(suppressPackageStartupMessages({
   library(caret)
   library(xgboost)
   library(car)
+  library(tidygeocoder)
 })))
 ```
 
@@ -149,6 +151,26 @@ Let's look at the data type of the different variables we have in the dataset.
 ```{r}
 glimpse(trip_combined_sample)
 ```
+
+High Level Key Statistics
+
+```{r}
+# Trips
+trip_combined_sample[,.N]
+
+# Vendor
+trip_combined_sample[, uniqueN(vendor_id)]
+
+# Medallions
+trip_combined_sample[, uniqueN(medallion)]
+
+# Drivers
+trip_combined_sample[, uniqueN(hack_license)]
+
+# Trip distance total
+trip_combined_sample[, sum(trip_distance)]
+```
+
 The date times are read as strings (character) format. Let's convert date strings to date time format in R  
 
 ```{r}
@@ -156,7 +178,7 @@ trip_combined_sample[, pickup_datetime := as.POSIXct(pickup_datetime,format="%Y-
 trip_combined_sample[, dropoff_datetime := as.POSIXct(dropoff_datetime,format="%Y-%m-%d %H:%M:%OS")]
 ```
 
-Summary of data shows that the taxi trips are recorded for only a month, and is from April 2013.
+Summary of data shows that the taxi trips are recorded for only a month, and is from March 2013.
 
 ```{r}
 summary(trip_combined_sample)
@@ -317,20 +339,19 @@ Most of trips are single passenger trips. We do have 0 passenger trips. Maybe, t
 
 ```{r}
 # Count trips group by passenger count
-plot_passenger_dist <- trip_combined_sample[, .N, by = list(passenger_count)]
+plot_passenger_dist <- trip_combined_sample[, .N, by = list(passenger_count)][,prop := round(N/sum(N),4)]
 
 # Convert the passenger count to a categorical variable
 plot_passenger_dist$passenger_count <- as.factor(plot_passenger_dist$passenger_count)
 
 # Visualize
-ggplot(plot_passenger_dist, aes(passenger_count, N, fill = passenger_count)) +
+ggplot(plot_passenger_dist, aes(passenger_count, prop, fill = passenger_count)) +
   geom_col() +
-  scale_y_sqrt() +
-  labs(x = "Passenger Count", y = "Number of Trips")+
-  ggtitle("Histogram of Passenger Count") +
-  theme(panel.background = element_blank(), 
-        axis.line = element_line(colour = "black"), 
-        plot.title = element_text(hjust = 0.5)) +
+  scale_y_continuous(labels = scales::percent)+
+  labs(x = "Number of Passengers", y = "Number of Trips (March 2013)")+
+  ggtitle("Number of Passengers/Trip") +
+  theme_bw() +
+  theme(panel.border = element_blank(),  panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), plot.title = element_text(hjust = 0.5))+
   theme(legend.position = "none") + 
   scale_colour_tableau()
 ```
@@ -347,14 +368,13 @@ plot_payment_type_dist <- trip_combined_sample[, .N, by = list(payment_type)]
 plot_payment_type_dist$payment_type <- as.factor(plot_payment_type_dist$payment_type)
 
 # Visualize
-ggplot(plot_payment_type_dist, aes(payment_type, N, fill = payment_type)) +
+ggplot(plot_payment_type_dist, aes(payment_type, N/sum(N), fill = payment_type)) +
   geom_col() +
-  scale_y_sqrt() +
+  scale_y_continuous(labels = scales::percent)+
   labs(x = "Payment Type", y = "Number of Trips")+
-  ggtitle("Histogram of Payment Type") +
-  theme(panel.background = element_blank(), 
-        axis.line = element_line(colour = "black"), 
-        plot.title = element_text(hjust = 0.5)) +
+  ggtitle("Payment Type/Trip") +
+  theme_bw() +
+  theme(panel.border = element_blank(),  panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), plot.title = element_text(hjust = 0.5))+
   theme(legend.position = "none") + 
   scale_colour_tableau()
 ```
@@ -468,7 +488,7 @@ ggplot(plot_wday_trips, aes(pickup_wday, N, colour = vendor_id)) +
         plot.title = element_text(hjust = 0.5))
 ```
 
-Looking at the chart above, it shows that *Tuesdays* were the busiest days for the month of April, 2013 followed by *Mondays*, *Saturdays* and *Fridays*.  
+Looking at the chart above, it shows that *Saturdays* were the busiest days for the month of March, 2013 followed by *Friday* and *Sundays*.  
 
 ## Hour of the day
 
@@ -524,6 +544,39 @@ ggplot(plot_hourly_trip_duration, aes(reorder(pickup_hour, -mean_hourly_trip_dur
 
 Trip in the afternoons till evenings are longer duration trips, probably because of traffic.
 
+```{r}
+plot_wday_hour_trips <- trip_combined_sample[, .N, by = list(pickup_wday, pickup_hour)]
+
+ggplot(plot_wday_hour_trips, aes(pickup_wday, pickup_hour, fill= N, text = N)) + 
+  geom_tile()+
+  scale_fill_gradient(low="Light Blue", high="Dark Blue")+
+  labs(x = "Day of the Week", y = "Hour of the Day") +
+  labs(fill = "Trips")
+
+```
+
+Fridays and Weekends are the busiest and trips in evenings 6-10pm are at peak.
+
+## Busiest locations and postcodes
+
+Here are the top 10 locations/postcodes by pickup
+
+```{r}
+trip_combined_sample[, pickup_latitude_rd := round(pickup_latitude,2)]
+trip_combined_sample[, pickup_longitude_rd := round(pickup_longitude,2)]
+
+top_10_pickups <- head(trip_combined_sample[, .N, by = list(pickup_latitude_rd, pickup_longitude_rd)][order(-N)],10)
+
+setDF(top_10_pickups)
+
+top_10_pickups_rev_geo <- top_10_pickups%>%reverse_geocode(pickup_latitude_rd, pickup_longitude_rd, method = 'osm',
+address = address_found, full_results = TRUE)
+
+setDT(top_10_pickups_rev_geo)
+
+top_10_pickups_rev_geo[, list(pickup_latitude_rd, pickup_longitude_rd, trips = N, address_found, postcode)]
+```
+
 ## Pickup distance from NYC centre
 
 To see which at the busiest locations for taxi pickup and the impact of location on fare amount, let us compute a feature/variable which depicts the distance from city center. The hypothesis is that the locations closer to city center will be the busiest.
@@ -567,34 +620,6 @@ ggplot(plot_distance_from_city, aes(reorder(km_bin, -N), N, fill = reorder(km_bi
 ```
 
 The above chart shows top ten locations (in terms of radial distance from NYC center). The top 5 busiest locations are within 10km radius of the New York city center. 
-
-## Trip with highest Standard Deviation 
-
-The 100% of the trip duration ranges from min to max (1, 10800) secs. The 99.7% of the trip duration range as per 3 standard deviation are (-895.3775, 2397.632). The sample dataset does not have any negative values and is positively right skewed. Hence, the trip with max trip duration of 10800 secs is the trip with the highest standard deviation
-
-```{r}
-trip_combined_sample[ , .(min = min(trip_time_in_secs), max = max(trip_time_in_secs))]
-trip_combined_sample[ , .(lower_bound = mean(trip_time_in_secs) - 3*sd(trip_time_in_secs), upper_bound = mean(trip_time_in_secs) + 3*sd(trip_time_in_secs))]
-
-ggplot(trip_combined_sample, aes(trip_time_in_secs, fill = "red", colour = 'red')) +
-  geom_density(adjust = 5, alpha = 0.2) +
-  labs(x = "Trip Duration (in secs)", y = "Density") +
-  ggtitle("Density plot of Trip Duration") +
-  theme(panel.background = element_blank(), 
-        axis.line = element_line(colour = "black"), 
-        plot.title = element_text(hjust = 0.5)) +
-  theme(legend.position = "none")
-```
-
-
-
-## Standard Deviation of Fare Amount
-
-Trip with the most consistent fare amount is the one with the least standard deviation which implies the trip with the fare amount closest to the mean fare amount.
-
-```{r}
-trip_combined_sample[trip_combined_sample[, which.min(abs(fare_amount - mean(fare_amount)))]]
-```
 
 # Multi-collinearity Analysis
 
@@ -766,10 +791,6 @@ xgb.importance(names(train_data)[1:12], model = model_4)
 
 The feature importance shows the top two features are *trip_distance* and *trip_time_in_secs*  
 
-# Mean values as central tendency
-
-We have already established that our data has outliers and the distribution of fare amount and trip duration is positively right skewed. Since the distribution is not normal, the respective means for fare amount and trip duration cannot be treated as a measure of central tendency unless we try to make the distribution normal by removing the outliers or by transforming the variables (fare and distance).
-
 # Maximize earnings in a day
 
 Assuming an 8-hour shift, let's see which starting hour of the shift in a day gives maximun earnings 
@@ -838,3 +859,18 @@ Based on the given data:
 * Not considering the competiton, the target location would be within 10kms radius from NYC center
 * Newer taxis could be targetted for longer trip hotspots while older ones can be targetted for shorter trips
 * More complex analysis can be done the taxi ideal time/location compared to the demand time/location and redirecting taxis based on an optimisation algorithm
+
+# Issues with the data
+
+* There are errors in capturing the latitude, longitude, trip distance and trip time and we have establised that these are the key features in predicting the fare amount
+* We need to establish the data quality, remediation and goverance rules around data to ensure efficient use of anytics to maximise earning
+* Windsorization can be done around fare amounts, tip amounts, total amounts, trip duration and distances
+* We do have oultier and data cleaning process but further rules around overlapping trips and impossible trip distance to trip time ratios can be implemented to further clean the data
+* Volume of data is massive. Effecient data engineering, pre-processing and transformation can be implemented to reduce analytical infrastructure costs
+
+# Drawbacks of current model
+* Potentially overfitting to one month of trip transaction
+* Seasonal effects of data/taxi trips are not getting captured as we are fitting to one month of data
+* An ensemble of model can be built to capture different dynamics of data
+* Further feature engineering can be done to come up with better features
+

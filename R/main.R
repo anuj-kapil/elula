@@ -7,7 +7,8 @@ list.of.packages <- c(
   "plotly",
   "leaflet",
   "geosphere",
-  "ggthemes"
+  "ggthemes",
+  "tidygeocoder"
 )
 
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[, "Package"])]
@@ -21,7 +22,7 @@ library(plotly)
 library(leaflet)
 library(geosphere)
 library(ggthemes)
-
+library(tidygeocoder)
 ###########################################
 # Prepare sample dataset
 
@@ -101,7 +102,7 @@ trip_combined_sample[, dropoff_datetime := as.POSIXct(dropoff_datetime,format="%
 
 summary(trip_combined_sample)
 
-# One month of data from April 2013
+# One month of data from March 2013
 
 # Lets remove the null values from lat and long
 trip_combined_sample <- trip_combined_sample[!is.na(dropoff_longitude) & !is.na(dropoff_latitude)]
@@ -243,13 +244,18 @@ trip_combined_sample[fare_amount>=500]
 
 # Univariate Analysis
 
-plot_passenger_dist <- trip_combined_sample[, .N, by = list(passenger_count)]
+
+
+plot_passenger_dist <- trip_combined_sample[, .N, by = list(passenger_count)][,prop := round(N/sum(N),4)]
 
 plot_passenger_dist$passenger_count <- as.factor(plot_passenger_dist$passenger_count)
-ggplot(plot_passenger_dist, aes(passenger_count, N, fill = passenger_count)) +
+
+plot_passenger_dist[order(passenger_count)]
+
+ggplot(plot_passenger_dist, aes(passenger_count, prop, fill = passenger_count)) +
   geom_col() +
-  scale_y_continuous(labels = scales::comma)+
-  labs(x = "Number of Passengers", y = "Number of Trips (April 2013)")+
+  scale_y_continuous(labels = scales::percent)+
+  labs(x = "Number of Passengers", y = "Number of Trips (March 2013)")+
   ggtitle("Number of Passengers/Trip") +
   theme_bw() +
   theme(panel.border = element_blank(),  panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), plot.title = element_text(hjust = 0.5))+
@@ -257,7 +263,7 @@ ggplot(plot_passenger_dist, aes(passenger_count, N, fill = passenger_count)) +
   scale_colour_tableau()
 
 # Count trips group by payment type
-plot_payment_type_dist <- trip_combined_sample[, .N, by = list(payment_type)]
+plot_payment_type_dist <- trip_combined_sample[, .N, by = list(payment_type)][,prop := round(N/sum(N),4)]
 
 # Convert the payment type to a categorical variable
 plot_payment_type_dist$payment_type <- as.factor(plot_payment_type_dist$payment_type)
@@ -279,7 +285,25 @@ ggplot(trip_combined_sample, aes(fare_amount)) +
                  col="black", 
                  fill="light blue") +
   labs(x = "Fare Amount", y = "Number of Trips")+
-  ggtitle("Histogram of Fare Amount") +
+  ggtitle("") +
+  theme(panel.background = element_blank(), 
+        axis.line = element_line(colour = "black"), 
+        plot.title = element_text(hjust = 0.5))+
+  theme(legend.position = "none") + 
+  scale_colour_tableau()
+
+hist(trip_combined_sample$tip_amount)
+
+### Distribution of Fare Amount (Airport)
+trip_combined_sample_airport <- copy(trip_combined_sample)
+trip_combined_sample_airport <- trip_combined_sample_airport[rate_code!=1]
+
+ggplot(trip_combined_sample_airport, aes(fare_amount)) +
+  geom_histogram(binwidth = 20,
+                 col="black", 
+                 fill="light blue") +
+  labs(x = "Fare Amount", y = "Number of Trips")+
+  ggtitle("") +
   theme(panel.background = element_blank(), 
         axis.line = element_line(colour = "black"), 
         plot.title = element_text(hjust = 0.5))+
@@ -289,13 +313,14 @@ ggplot(trip_combined_sample, aes(fare_amount)) +
 hist(trip_combined_sample$tip_amount)
 
 ### Distribution of Tip Amount
-
+summary(trip_combined_sample)
+trip_combined_sample[, .N]
 ggplot(trip_combined_sample, aes(tip_amount)) +
   geom_histogram(binwidth = 10,
                  col="black", 
                  fill="light blue") +
   labs(x = "Tip Amount", y = "Number of Trips")+
-  ggtitle("Histogram of Tip Amount") +
+  ggtitle("") +
   theme(panel.background = element_blank(), 
         axis.line = element_line(colour = "black"), 
         plot.title = element_text(hjust = 0.5))+
@@ -305,6 +330,7 @@ ggplot(trip_combined_sample, aes(tip_amount)) +
 
 hist(trip_combined_sample$total_amount)
 
+### Distribution of Total Amount
 ggplot(trip_combined_sample, aes(total_amount)) +
   geom_histogram(binwidth = 20,
                  col="black", 
@@ -411,6 +437,14 @@ ggplot(plot_wday_trips, aes(pickup_wday, N, colour = vendor_id)) +
         axis.line = element_line(colour = "black"), 
         plot.title = element_text(hjust = 0.5))
 
+plot_wday_hour_trips <- trip_combined_sample[, .N, by = list(pickup_wday, pickup_hour)]
+
+
+ggplot(plot_wday_hour_trips, aes(pickup_wday, pickup_hour, fill= N, text = N)) + 
+  geom_tile()+
+  scale_fill_gradient(low="Light Blue", high="Dark Blue")+
+  labs(x = "Day of the Week", y = "Hour of the Day") +
+  labs(fill = "Trips")
 
 # Hour of the day
 
@@ -422,7 +456,7 @@ ggplot(plot_hourly_trips, aes(reorder(pickup_hour, -N), N, fill = reorder(pickup
   geom_col() +
   scale_y_sqrt() +
   labs(x = "Hour of the day", y = "Total number of pickups") +
-  ggtitle("Taxi trips by hour of the day") +
+  ggtitle("") +
   theme(panel.background = element_blank(), 
         axis.line = element_line(colour = "black"), 
         plot.title = element_text(hjust = 0.5)) +
@@ -452,6 +486,22 @@ ggplot(plot_hourly_trip_duration, aes(reorder(pickup_hour, -mean_hourly_trip_dur
         axis.line = element_line(colour = "black"), 
         plot.title = element_text(hjust = 0.5)) +
   theme(legend.position = "none")
+
+########
+# Busiest locations by pickup
+trip_combined_sample[, pickup_latitude_rd := round(pickup_latitude,2)]
+trip_combined_sample[, pickup_longitude_rd := round(pickup_longitude,2)]
+
+top_10_pickups <- head(trip_combined_sample[, .N, by = list(pickup_latitude_rd, pickup_longitude_rd)][order(-N)],10)
+
+setDF(top_10_pickups)
+
+top_10_pickups_rev_geo <- top_10_pickups%>%reverse_geocode(pickup_latitude_rd, pickup_longitude_rd, method = 'osm',
+address = address_found, full_results = TRUE)
+
+setDT(top_10_pickups_rev_geo)
+
+top_10_pickups_rev_geo[, list(pickup_latitude_rd, pickup_longitude_rd, trips = N, address_found, postcode)]
 
 # Mean Fare amount and mean distance
 trip_combined_sample[ , .(mean(fare_amount), mean(trip_time_in_secs)), by = list(pickup_hour)]
