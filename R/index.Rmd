@@ -792,6 +792,11 @@ xgb.importance(names(train_data)[1:12], model = model_4)
 The feature importance shows the top two features are *trip_distance* and *trip_time_in_secs*  
 
 # Maximize earnings in a day
+As an owner, I could think of two approaches:
+* Target the peak demand hours
+* Target the peak earning hours while minimising travel time
+
+The off-peak hours can be skipped and can be used for taxi maintenance.
 
 Assuming an 8-hour shift, let's see which starting hour of the shift in a day gives maximun earnings 
 
@@ -849,14 +854,15 @@ ggplot(sum_earnings_trips_hr[fare_amount_sum_shift>=mean(fare_amount_sum_shift)]
 ```
 
 The chart shows if we start the 8-hour shift from 7pm (evenings), we will be spent the least time on taxi trips while still maintaining average earnings.
+Further, based on the peak-times, we can sort the top pickup locations that earns the most total fare.
 
 # Maximising 10 taxis fleet
 
 Based on the given data:  
 
-* Assuming a percentage share in the fare, target the pickups in the evenings after 4pm
+* Assuming a percentage share in the fare, instruct the shift drivers to target the pickups in the evenings after 4pm
 * Considering the expenses on repair/replace of taxis, target shorter trips (time/distance) while still maintaing average fare income
-* Not considering the competiton, the target location would be within 10kms radius from NYC center
+* Not considering the competiton, the target location would be within 10kms radius from NYC center and hotspots
 * Newer taxis could be targetted for longer trip hotspots while older ones can be targetted for shorter trips
 * More complex analysis can be done the taxi ideal time/location compared to the demand time/location and redirecting taxis based on an optimisation algorithm
 
@@ -871,6 +877,7 @@ Based on the given data:
 # Drawbacks of current model
 * Potentially overfitting to one month of trip transaction
 * Seasonal effects of data/taxi trips are not getting captured as we are fitting to one month of data
+* Driver characterstics are not taken in to account. A different model was attempted to characterise high income drivers
 * An ensemble of model can be built to capture different dynamics of data
 * Further feature engineering can be done to come up with better features
 

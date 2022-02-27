@@ -8,9 +8,13 @@ list.of.packages <- c(
   "leaflet",
   "geosphere",
   "ggthemes",
+  "ggcorrplot",
+  "webshot",
+  "caret",
+  "xgboost",
+  "car",
   "tidygeocoder"
 )
-
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[, "Package"])]
 if (length(new.packages)) install.packages(new.packages, repos = "https://cran.rstudio.com/", dependencies = T)
 
@@ -22,7 +26,13 @@ library(plotly)
 library(leaflet)
 library(geosphere)
 library(ggthemes)
+library(ggcorrplot)
+library(webshot)
+library(caret)
+library(xgboost)
+library(car)
 library(tidygeocoder)
+
 ###########################################
 # Prepare sample dataset
 
@@ -577,5 +587,8 @@ ggplot(head(trip_combined_sample, 50000)) +
   geom_point(aes(x=pickup_dist_from_city, y=trip_distance, col = fare_amount)) +
   scale_color_gradientn(colours = rainbow(5))
 
+trip_combined[, sum(total_amount), by = list(medallion, work_date)][mean(V1, na.rm = T)]
+trip_combined[, sum(total_amount), by = list(hack_license, work_date)][mean(V1, na.rm = T)]
 
 ?cut
+
