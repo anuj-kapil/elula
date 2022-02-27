@@ -791,6 +791,131 @@ xgb.importance(names(train_data)[1:12], model = model_4)
 
 The feature importance shows the top two features are *trip_distance* and *trip_time_in_secs*  
 
+# Driver Characteristics
+
+## Feature Engineering
+
+* Extract date and time from pickup datetimestamp
+* Shift of the driver to compute daily statistics
+* Compute cruise time, which is the idle time between trips
+* Compute work time as total of trip time and idle time
+* Calculate daily trip durations, distances, work time, daily income (total fare amount), peak operating hour
+
+```{r eval=FALSE, include=TRUE}
+trip_combined[, pickup_datetime := as.POSIXct(pickup_datetime,format="%Y-%m-%d %H:%M:%OS")]
+trip_combined[, dropoff_datetime := as.POSIXct(dropoff_datetime,format="%Y-%m-%d %H:%M:%OS")]
+
+# Extract timestamp from datetimestamp
+trip_combined[,pickup_timestamp:= format(pickup_datetime, format = "%H:%M:%S")]
+trip_combined[,pickup_timestamp:= as.POSIXct(pickup_timestamp, format = "%H:%M:%S")]
+
+setorderv(trip_combined, cols = c("hack_license", "pickup_datetime"))
+
+# Extract date part from datetimestamp
+trip_combined[, work_date:= date(pickup_datetime)]
+
+# Calculate the shift of the driver 
+trip_combined[, shift_i:= findInterval(pickup_timestamp, as.POSIXct(c("00:00", "03:00", "18:00", "24:00"), format = "%H:%M"))]
+trip_combined[, shift := paste(if_else(shift_i == 2L, "Day", "Night"), work_date - min(work_date) + (shift_i == 3L)), by = list(hack_license)]
+
+# Cruise time is the idle time between trips
+trip_combined[, cruise_time:= shift(pickup_datetime,1,type = "lead") - dropoff_datetime, by = list(hack_license)]
+trip_combined$cruise_time <- as.numeric(trip_combined$cruise_time)
+
+# Remove overlapping trips and extreme cruise times 90 percentile
+trip_combined <- trip_combined[cruise_time>=0 & cruise_time<quantile(cruise_time, 0.9)]
+
+trip_combined$work_time <- rowSums(trip_combined[,c('trip_time_in_secs', 'cruise_time')], na.rm = T)
+
+trip_combined[, pickup_hour := hour(pickup_datetime)]
+
+driver_daily <- trip_combined[, .(daily_wages = sum(total_amount), daily_work = sum(work_time), daily_trip_distance = sum(trip_distance), daily_cruise = sum(cruise_time), daily_trip_time = sum(trip_time_in_secs), median_hour = median(pickup_hour), num_trips = .N), by = list(hack_license, shift)]
+
+driver_monthly <- driver_daily[,.(avg_income = mean(daily_wages), avg_work_time = mean(daily_work), avg_trip_distance = mean(daily_trip_distance), avg_cruise = mean(daily_cruise, na.rm = T), avg_trip_time = sum(daily_trip_time), avg_hour = mean(median_hour), avg_trips = mean(num_trips)), by = list(hack_license)]
+
+```
+
+## Multi-collinearity Analysis
+
+Looking at the chart below, the average income has a fairly high linear relationship with average work time and total trips taken.
+
+```{r eval=FALSE, include=TRUE}
+driver_cormat <- driver_monthly[, list(avg_work_time,
+                                       avg_trip_distance,
+                                       avg_cruise,
+                                       avg_trip_time,
+                                       avg_hour,
+                                       avg_trips,
+                                       avg_income)]
+
+
+corr <- cor(driver_cormat, use = "pairwise.complete.obs")
+
+
+ggcorrplot(corr, hc.order = FALSE, type = "lower",
+           ggtheme = ggthemes::theme_gdocs,
+           colors = c("#ff7f0e", "white", "#1f83b4"),
+           lab = TRUE) +
+  ggtitle("Correlation Matrix") +
+  theme(panel.grid.major=element_blank(),
+        plot.title = element_text(hjust = 0.5)) 
+```
+
+## Machine Learning
+
+Next we try to fit a machine learning model to our driver data to characterise high income drivers from low income ones . We are going to try Extreme gradient boosting (xgboot) model for our regression problem. Here we are fitting a xgboost model with randomly chosen hyperparameters and analyse which features are important in determining the average income of driver
+
+```{r eval=FALSE, include=TRUE}
+set.seed(131)
+training_samples <- createDataPartition(driver_cormat$avg_income, p = 0.8, list = FALSE)
+train_data  <- driver_cormat[training_samples, ]
+test_data <- driver_cormat[-training_samples, ]
+
+
+# Model
+
+xg_train <- xgb.DMatrix(data.matrix(train_data[, names(train_data)[1:6],with=FALSE])
+                        , label = train_data$avg_income
+                        , missing = NaN
+)
+
+xg_test <- xgb.DMatrix(data.matrix(test_data[, names(test_data)[1:6],with=FALSE])
+                       , label = test_data$avg_income
+                       , missing = NaN
+)
+
+
+# Hyperparameter has been randomly chosen but can be tuned using a gridsearch method
+model_4 <- xgboost(data = xg_train, # training data as matrix
+                   label = train_data$fare_amount,  # column of outcomes
+                   nrounds = 100,       # number of trees to build
+                   objective = 'reg:squarederror', # objective
+                   eta = 0.3,
+                   depth = 6,
+                   verbose = 0  # silent
+)
+
+# Make predictions
+pred <- predict(model_4, xg_test)
+
+data.table(
+  RMSE = RMSE(pred, test_data$avg_income),
+  R2 = R2(pred, test_data$avg_income)
+)
+
+xgb.importance(names(train_data)[1:6], model = model_4)
+
+# Feature         Gain      Cover Frequency
+# 1:     avg_work_time 0.4773516202 0.27459511 0.2310373
+# 2:         avg_trips 0.2647912543 0.19359222 0.1523165
+# 3: avg_trip_distance 0.2525072212 0.21180838 0.2330873
+# 4:        avg_cruise 0.0029447935 0.18880676 0.1580566
+# 5:     avg_trip_time 0.0018260003 0.05954298 0.1236162
+# 6:          avg_hour 0.0005791105 0.07165455 0.1018860
+```
+
+The feature importance shows the top two features are *avg_work_time* and *avg_trips*
+
 # Maximize earnings in a day
 As an owner, I could think of two approaches:
 * Target the peak demand hours
